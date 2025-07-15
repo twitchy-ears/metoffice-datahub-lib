@@ -8,7 +8,7 @@ The second is `metoffice-datahub-mode` which is a small package designed to put 
 
 # metoffice-datahub-lib
 
-The first thing you need to do for this is visit the [Datahub pages](https://datahub.metoffice.gov.uk/ to apply for an account, you won't need more than the free account as long as you're not going to try and run this on a hundred machines with the same API key and refresh them all at once.
+The first thing you need to do for this is visit the [Datahub pages](https://datahub.metoffice.gov.uk/) to apply for an account, you won't need more than the free account as long as you're not going to try and run this on a hundred machines with the same API key and refresh them all at once.
 
 Once you have the account then this explains inserting API keys from the "subscription" page into the auth: [API Documentation AUTHENTICATION](https://datahub.metoffice.gov.uk/docs/f/category/site-specific/type/site-specific/api-documentation#auth)
 
@@ -94,6 +94,21 @@ Or alternatively if you want temperature numbers in your modeline use:
 (setq metoffice-datahub-mode-temp-symbols
         '(" TEMPERATURE" " TEMPERATURE" " TEMPERATURE"))
 ```
+
+
+# Screenshots
+
+Of course
+
+Full mouse-over forecast: 
+![Image showing a rainy face emoji and a catface emoji with a description of the rain in a long popup from the modeline](https://github.com/twitchy-ears/metoffice-datahub-lib/blob/assets/metoffice-datahub-lib-mouseover.png)
+
+Just the emojis, notice I have customised the `metoffice-datahub-mode-temp-symbols` variable to make the OK temperature a catface: 
+![Image showing a rainy face emoji and a catface emoji](https://github.com/twitchy-ears/metoffice-datahub-lib/blob/assets/metoffice-datahub-lib-just-emoji.png)
+
+Showing the pure text config, its Heavy rain at the minute and feels like 13 degrees C
+![Image showing the text "Heavy rain 13"](https://github.com/twitchy-ears/metoffice-datahub-lib/blob/assets/metoffice-datahub-lib-just-text.png)
+
 
 
 # Bugs
