@@ -381,7 +381,7 @@ to disk then parses it out into useful variables for later."
     (url-retrieve url
                   callback
                   nil
-                  metoffice-datahub-verbose-mode)
+                  metoffice-datahub-lib-verbose-mode)
     (run-hooks 'metoffice-datahub-lib-after-fetch-hook)))
   
 
