@@ -1,4 +1,4 @@
-;;; metoffice-datahub-lib.el --- Library that queries and caches information from the Metoffice Datahub service -*- lexical-binding: t -*-
+;;; metoffice-datahub-lib.el --- Queries weather forecasts from the UK Metoffice Datahub API -*- lexical-binding: t -*-
 
 ;; Copyright 2025 - Twitchy Ears
 
@@ -45,7 +45,7 @@
 ;; As of 2025-07 you get 360 free calls a day, by default this library
 ;; will make a call to the three-hour weather forecast only if the
 ;; cached data is over 30m old so you should have plenty of calls (as
-;; a long running emacs session will only use 48 a day)
+;; a long running Emacs session will only use 48 a day)
 ;;
 ;; Informative documentation lingers around here:
 ;; https://www.metoffice.gov.uk/services/data/met-office-weather-datahub
@@ -64,7 +64,7 @@
 ;; metoffice-datahub-lib-description
 ;; metoffice-datahub-lib-current-weather
 ;;
-;; And the full API response in this variable: 
+;; And the full API response in this variable:
 ;; metoffice-datahub-lib-cached-response
 ;;
 ;; The metoffice-datahub-lib--decode-info function will help you decode that.
@@ -78,42 +78,68 @@
 ;; metoffice-datahub-lib-forecast function which will create one in a
 ;; popup buffer.
 
+;;; Code:
 
 (require 'json)
 (require 'url)
 (require 'parse-time)
 (require 'cl-lib)
 
-(defvar metoffice-datahub-lib-verbose-mode nil "If set to t then functions may output various progress and debugging messages")
+(defvar metoffice-datahub-lib-verbose-mode nil "If set to t then functions may output various progress and debugging messages.")
 
-(defvar metoffice-datahub-lib-forecast-buffer "*forecast*" "The buffer name for outputting forecasts of all future weather events known about, used by metoffice-datahub-lib-forecast")
+(defvar metoffice-datahub-lib-forecast-buffer
+  "*forecast*"
+  "Buffer name for outputting future weather forecasts.
+Used by metoffice-datahub-lib-forecast function.")
 
-(defvar metoffice-datahub-lib-forecast-max-events nil "How many events from the timeSeries data to read through generating a forecast buffer, by default its nil meaning all of them")
+(defvar metoffice-datahub-lib-forecast-max-events
+  nil
+  "How many events included in forecast buffer, nil means all of them.")
 
-(defvar metoffice-datahub-lib-apikey nil "The API key for your metoffice datahub account, see https://datahub.metoffice.gov.uk/docs/f/category/site-specific/type/site-specific/api-documentation#auth for setting it")
+(defvar metoffice-datahub-lib-apikey nil
+  "The API key for your metoffice datahub account.
+See https://datahub.metoffice.gov.uk/docs/f/category/site-specific/type/site-specific/api-documentation#auth for setting it.")
 
-(defvar metoffice-datahub-lib-base-url "https://data.hub.api.metoffice.gov.uk/sitespecific/v0/point/" "Base URL for where the metoffice API is available from, you shouldn't need to update this")
+(defvar metoffice-datahub-lib-base-url
+  "https://data.hub.api.metoffice.gov.uk/sitespecific/v0/point/"
+  "Base URL for metoffice API, you shouldn't need to update this.")
 
-(defvar metoffice-datahub-lib-query-type "three-hourly" "Choice of time specific API either 'hourly', 'three-hourly', or 'daily' - currently only three-hourly is properly implemented")
+(defvar metoffice-datahub-lib-query-type
+  "three-hourly"
+  "Choice of time specific API either `hourly', `three-hourly', or `daily'.")
 
-(defvar metoffice-datahub-lib-long-lat '(nil nil) "Should be a list, the first element is longitude, the second is latitude")
+(defvar metoffice-datahub-lib-long-lat '(nil nil) "List, the first element is longitude, the second is latitude.")
 
-(defvar metoffice-datahub-lib-cached-response nil "Contains the latest response cached, a JSON data parsed into elisp")
+(defvar metoffice-datahub-lib-cached-response nil "Contains the latest response cached, a JSON data parsed into elisp.")
 
-(defvar metoffice-datahub-lib-long-description nil "Contains a long string describing the current weather conditions from the last update")
+(defvar metoffice-datahub-lib-long-description
+  nil
+  "String describing the current weather conditions from the last update.")
 
-(defvar metoffice-datahub-lib-description nil "Contains a string describing the current weather conditions from the last update")
+(defvar metoffice-datahub-lib-description
+  nil
+  "String describing the current weather conditions from the last update.")
 
-(defvar metoffice-datahub-lib-symbol nil "Contains a unicode emoji describing the current weather conditions from the last update")
+(defvar metoffice-datahub-lib-symbol
+  nil
+  "A unicode emoji describing the current weather conditions.")
 
-(defvar metoffice-datahub-lib-current-weather nil "Contains a hashtable of the current weather window")
+(defvar metoffice-datahub-lib-current-weather nil "Contains a hashtable of the current weather window.")
 
-(defvar metoffice-datahub-lib-decoder nil "The function used to parse the response and set all the internal variables, if set to nil then will guess based on metoffice-datahub-lib-query-type")
+(defvar metoffice-datahub-lib-decoder
+  nil
+  "Function used to parse the response and set all the internal variables.
 
-(defvar metoffice-datahub-lib-data-cache nil 
-  "File that stores the cached responses from querying the API, cached according to the query-type, if nil will use metoffice-datahub-lib--generate-data-cacheto pick the location.")
+If set to nil then will guess based on metoffice-datahub-lib-query-type.")
 
-(defvar metoffice-datahub-lib-data-cache-maxage (* 30 60) "Maximum age in seconds of the cache before loading it again, defaults to 30 minutes")
+(defvar metoffice-datahub-lib-data-cache
+  nil
+  "File that stores the cached responses from querying the API.
+
+Cached according to the query-type, if nil will use
+metoffice-datahub-lib--generate-data-cacheto pick the location.")
+
+(defvar metoffice-datahub-lib-data-cache-maxage (* 30 60) "Maximum age in seconds of the cache before loading it again.")
 
 (defvar metoffice-datahub-lib-significant-weather-codes
   '((-1 . "Trace rain")
@@ -148,7 +174,9 @@
     (28	. "Thunder shower (night)")
     (29	. "Thunder shower (day)")
     (30	. "Thunder"))
-  "An alist of weather codes to strings they describe see https://www.metoffice.gov.uk/services/data/datapoint/code-definitions")
+  "An alist of weather codes to strings they describe.
+
+See https://www.metoffice.gov.uk/services/data/datapoint/code-definitions.")
 
 (defvar metoffice-datahub-lib-significant-weather-codes-to-symbols
   '((-1 . "🌧️") ;; Trace rain
@@ -183,22 +211,28 @@
     (28	. "🌩️") ;; Thunder shower (night)
     (29	. "🌩️") ;; Thunder shower (day)
     (30	. "🌩️")) ;; Thunder
-       "An alist of weather codes to emojis they describe see https://www.metoffice.gov.uk/services/data/datapoint/code-definitions")
+  "An alist of weather codes to emojis they describe.
 
-(defvar metoffice-datahub-lib-after-fetch-hook nil "Hook that runs after data is fetched fresh from the API (and not from cache)")
+See https://www.metoffice.gov.uk/services/data/datapoint/code-definitions")
+
+(defvar metoffice-datahub-lib-after-fetch-hook
+  nil
+  "Hook that runs after data is fetched fresh from the API (and not from cache).")
 
 
 
 ;; Functions
 
 (defun metoffice-datahub-lib--debug-message (&rest args)
-  "Outputs debugging messages but only if the variable
-`metoffice-datahub-lib-verbose-mode' is true"
+  "Outputs debugging messages if verbose-mode on.
+
+`metoffice-datahub-lib-verbose-mode' controls if ARGS are printed,
+joined as a single string."
   (when metoffice-datahub-lib-verbose-mode
     (message "%s" (string-join args " "))))
 
 (defun metoffice-datahub-lib--file-mtime (filename)
-  "Extracts the mtime of a file"
+  "Extracts the mtime of a file FILENAME."
   (string-to-number
    (format-time-string
     "%s"
@@ -207,13 +241,14 @@
       (file-truename (expand-file-name filename)))))))
 
 (defun metoffice-datahub-lib--file-age-check-p (filename &optional maxage)
-  "Checks to see if a file is older the the maximum age allowed,
-returns t if the file is fresh enough to use, and nil if the file is
+  "Check to see if a file is older the the maximum age allowed.
+
+Returns t if the file is fresh enough to use, and nil if the file is
 stale/too old to use.
 
-Takes an argument of `filename' which should be the full path to a file
+Takes an argument of `FILENAME' which should be the full path to a file
 
-Second optional argument is `maxage' which is a time in seconds
+Second optional argument is `MAXAGE' which is a time in seconds
 
 If maxage isn't set uses metoffice-datahub-lib-data-cache-maxage"
   (unless maxage
@@ -234,9 +269,11 @@ If maxage isn't set uses metoffice-datahub-lib-data-cache-maxage"
     (>= fileage maxage-ts)))
 
 (defun metoffice-datahub-lib--generate-data-cache ()
-  "Generates a location for the cache, by default stores a file in the
-user-emacs-directory called metoffice-datahub-%s-cache.json filling in
-the blank with metoffice-datahub-lib-query-type"
+  "Generate a location for the JSON cache file.
+
+By default stores a file in the `user-emacs-directory' called
+metoffice-datahub-%s-cache.json filling in the blank with
+`metoffice-datahub-lib-query-type'"
   (expand-file-name
    (format "%s/%s"
            user-emacs-directory
@@ -245,11 +282,12 @@ the blank with metoffice-datahub-lib-query-type"
   
 
 (defun metoffice-datahub-lib--save-json (json-data &optional filename)
-  "Saves JSON data into a file for caching the response, and also sets
-it into a cache variable called `metoffice-datahub-lib-cached-response' for
-other functions to retrieve.
+  "Save JSON data into a file for caching the response.
 
-Takes 2 arguments, first is the json-data and the second is the filename.
+Also sets it into a cache variable called
+`metoffice-datahub-lib-cached-response' for other functions to retrieve.
+
+Takes 2 arguments, first is the JSON-DATA and the second is the FILENAME.
 
 If the filename is nil or missing it uses
 `metoffice-datahub-lib--generate-data-cache' to generate one."
@@ -267,7 +305,7 @@ If the filename is nil or missing it uses
         (insert (format "%s" data))))))
 
 (defun metoffice-datahub-lib--load-json (&optional filename)
-  "Loads JSON data out of filename and into a cache variable.
+  "Load JSON data out of FILENAME and into a cache variable.
 
 If the filename isn't specified uses
 `metoffice-datahub-lib--generate-data-cache' to generate it."
@@ -291,8 +329,9 @@ If the filename isn't specified uses
 (defun metoffice-datahub-lib-process (&optional status cbargs)
   "The default callback function run from `metoffice-datahub-lib-fetch'.
 
-Takes the initial response, checks it for being a 200 OK response,
-then attempts to extract the JSON data from it, if it runs
+Takes the arguments STATUS and CBARGS which are ignored, instead checks
+the response buffer for being a 200 OK response, then attempts to extract
+the JSON data from it, if it runs
 `metoffice-datahub-lib--save-json' to save it to disk and set the
 `metoffice-datahub-lib-cached-response' variable.
 
@@ -323,8 +362,11 @@ consumption."
 
 
 (defun metoffice-datahub-lib-build-url (url args)
-  "Constructs a URL from a base and some args, which should be a list of
-cons cells"
+  "Construct a URL from a base and some args.
+
+URL should be the basic address, which has `?' on the end followed by
+a string of A=B options from ARGS, which should be specified as a list
+of cons cells."
   ;; This is essentially stolen from the example of pepita--build-querystring from https://github.com/sebasmonia/pepita/blob/489ddc2675906f9dd27bd4ec69ef140e52194952/pepita.el#L119-L164 thanks Sebastian"
   (format "%s?%s"
           url
@@ -335,14 +377,15 @@ cons cells"
                      "&")))
 
 (cl-defun metoffice-datahub-lib-fetch (&optional &key mo-url callback long-lat)
-  "Actually fetches the fresh data and caches it.  Takes 3 keyword
-arguments, all optional:
+  "Actually fetches the fresh data and caches it.
 
-`mo-url' - specify the URL to append queries too
+Takes 3 keyword arguments, all optional:
 
-`callback' - specify the function to send data too when fetched
+`MO-URL' - specify the URL to append queries too
 
-`long-lat' - a 2 element list, the first of which is logitude, the
+`CALLBACK' - specify the function to send data too when fetched
+
+`LONG-LAT' - a 2 element list, the first of which is logitude, the
 second latitude both as strings.
 
 Relies on `metoffice-datahub-lib-apikey' being set, constructs a URL
@@ -386,8 +429,10 @@ to disk then parses it out into useful variables for later."
   
 
 (defun metoffice-datahub-lib-refresh ()
-  "Intended as the way the user or another elisp system on a timer
-should refresh the data.
+  "Either refresh the data and variables from cache, or pull from the API.
+
+Intended as the way the user or another elisp system on a timer should
+refresh the data.
 
 It checks for the existence of a cache file from
  `metoffice-datahub-lib-data-cache' and if it exists uses
@@ -408,7 +453,7 @@ Otherwise it calls `metoffice-datahub-lib-fetch' to fetch fresh data
     (if (and (file-exists-p cache-file)
              (metoffice-datahub-lib--file-age-check-p cache-file))
         
-        (progn 
+        (progn
           (metoffice-datahub-lib--load-json cache-file)
           (metoffice-datahub-lib--decode-info))
       
@@ -422,22 +467,21 @@ Otherwise it calls `metoffice-datahub-lib-fetch' to fetch fresh data
     
 
 (defun metoffice-datahub-lib--sig-weather-code-to-string (code)
-  "Takes an integer code and returns the string that it describes"
+  "Take an integer CODE and return the string that it describes."
   ;; https://www.metoffice.gov.uk/services/data/datapoint/code-definitions
   (alist-get code metoffice-datahub-lib-significant-weather-codes))
 
 (defun metoffice-datahub-lib--sig-weather-code-to-symbol (code)
-  "Takes an integer code and returns the emoji unicode symbol that it describes"
+  "Take an integer CODE and return the emoji unicode symbol that it describes."
   ;; https://www.metoffice.gov.uk/services/data/datapoint/code-definitions
   (alist-get code metoffice-datahub-lib-significant-weather-codes-to-symbols))
 
 (defun metoffice-datahub-lib--decode-info (&optional data)
-  "The function used to parse the JSON data response from the API at the
-top level.
+  "Parse the JSON data response from the API at the top level.
 
-If not nil then runs the `metoffice-datahub-lib-decoder' function across
-the provided parsed JSON data and expects it to set a lot of variables, if
-it is nil it guesses based on `metoffice-datahub-lib-query-type'"
+If DATA not nil then runs the user selected `metoffice-datahub-lib-decoder'
+function across the provided data, and expects it to set a lot of variables,
+if that variable is nil it guesses based on `metoffice-datahub-lib-query-type'."
   (if metoffice-datahub-lib-decoder
 
       ;; User supplied function?  Call it
@@ -454,12 +498,12 @@ it is nil it guesses based on `metoffice-datahub-lib-query-type'"
            (metoffice-datahub-lib--decode-daily-info data))
           
           (t (error
-              "metoffice-datahub-lib--decode-info - no function supplied and metoffice-datahub-lib-query-type doesn't match known values")))))
+              "Error: metoffice-datahub-lib--decode-info - no function supplied and metoffice-datahub-lib-query-type doesn't match known values")))))
 
 (defun metoffice-datahub-lib--extract-current-timeseries (timeseries)
-  "Takes a timeseries vector from the results and looks for the most
-applicable entry, essentially running through until it finds one not applying
-to the past.
+  "Take a TIMESERIES vector and return the most date appropriate entry.
+
+Walks along the vector checking until it finds one not in the past.
 
 Returns a list that is (current-weather weather-index) where
 current-weather is a hash-table of the weather information and
@@ -467,10 +511,10 @@ weather-index is its position in timeseries, this is used for
 collecting up future output for longer scale forecasts"
 
     (unless (vectorp timeseries)
-      (error "metoffice-datahub-lib--extract-current-timeseries timeseries not a vector instead '%s'" timeseries))
+      (error "Error: metoffice-datahub-lib--extract-current-timeseries timeseries not a vector instead '%s'" timeseries))
 
     ;; all the response data is in UTC so we have to fetch for UTC as well
-    (let ((runtime (current-time)) 
+    (let ((runtime (current-time))
           (current-weather nil)
           (weather-index nil)
           (vlen (length timeseries)))
@@ -506,19 +550,21 @@ collecting up future output for longer scale forecasts"
           (list (aref timeseries 0) 0)))))
 
 (defun metoffice-datahub-lib--hour-based-weather-to-string (location-name current-weather)
-  "Parses timeSeries type hash-tables into string representations.
+  "Parse timeSeries type hash-tables into string representations.
 
-Takes 2 arguments, first being the location name, second being the
-current-weather which should be an hash-table entry from the timeSeries
+Takes 2 arguments, first being a string LOCATION-NAME, second being the
+CURRENT-WEATHER which should be an hash-table entry from the timeSeries
 vector in your results.
+
+Returns a string describing the weather.
 
 This version expects the format of the hourly/three-hourly queries."
   
   (unless location-name
-    (error "metoffice-datahub-lib--hour-based-weather-to-string location-name not defined"))
+    (error "Error: metoffice-datahub-lib--hour-based-weather-to-string location-name not defined"))
     
   (unless (hash-table-p current-weather)
-    (error "metoffice-datahub-lib--hour-based-weather-to-string current-weather not a hash-table is '%s' current-weather"))
+    (error "Error: metoffice-datahub-lib--hour-based-weather-to-string current-weather not a hash-table is '%s'" current-weather))
   
   (let* ((curr-time-data (encode-time
                           (parse-time-string
@@ -565,19 +611,21 @@ This version expects the format of the hourly/three-hourly queries."
     desc))
 
 (defun metoffice-datahub-lib--day-based-weather-to-string (location-name current-weather)
-  "Parses timeSeries type hash-tables into string representations.
+  "Parse timeSeries type hash-tables into string representations.
 
-Takes 2 arguments, first being the location name, second being the
-current-weather which should be an hash-table entry from the timeSeries
+Takes 2 arguments, first being a string LOCATION-NAME, second being the
+CURRENT-WEATHER which should be an hash-table entry from the timeSeries
 vector in your results.
+
+Returns a string describing the weather.
 
 This version expects the format of the daily query."
  
   (unless location-name
-    (error "metoffice-datahub-lib--day-based-weather-to-string location-name not defined"))
+    (error "Error: metoffice-datahub-lib--day-based-weather-to-string location-name not defined"))
     
   (unless (hash-table-p current-weather)
-    (error "metoffice-datahub-lib--day-based-weather-to-string current-weather not a hash-table is '%s' current-weather"))
+    (error "Error: metoffice-datahub-lib--day-based-weather-to-string current-weather not a hash-table is '%s'" current-weather))
   
   (let* ((curr-time-data (encode-time
                           (parse-time-string
@@ -630,18 +678,19 @@ This version expects the format of the daily query."
                        night-humidity
 
                        day-snow
-                       night-snow
-
-                       )))
+                       night-snow)))
     desc))
 
 
 (defun metoffice-datahub-lib--decode-hourly-info (&optional data)
+  "Decodes API responses from the `hourly' query type.
+
+Passes the DATA over to `metoffice-datahub-lib--decode-three-hourly-info'."
   (unless data
     (setq data metoffice-datahub-lib-cached-response))
   
   (unless (hash-table-p data)
-    (error "metoffice-datahub-lib--decode-info data not a hashtable instead '%s'" data))
+    (error "Error: metoffice-datahub-lib--decode-info data not a hashtable instead '%s'" data))
 
   ;; Works well enough to get the next hours data actually
   ;;
@@ -649,13 +698,13 @@ This version expects the format of the daily query."
   (metoffice-datahub-lib--decode-three-hourly-info data))
 
 (defun metoffice-datahub-lib--decode-three-hourly-info (&optional data)
-  "Takes the JSON data from the API and extracts current weather
+  "Take the JSON data from the API and extracts current weather.
 
-Takes one argument which should be the data from the API and should be
+Takes one argument which should be the DATA from the API and should be
  from either the hourly or three-hourly query, otherwise it uses
 the cached response in `metoffice-datahub-lib-cached-response'.
 
-At the end it sets the following variables: 
+At the end it sets the following variables:
 `metoffice-datahub-lib-current-weather' current weather hash-table
 `metoffice-datahub-lib-long-description' long parsed string description
 of the most current forecast
@@ -670,7 +719,7 @@ It also returns the long parsed string description."
     (setq data metoffice-datahub-lib-cached-response))
 
   (unless (hash-table-p data)
-    (error "metoffice-datahub-lib--decode-info data not a hashtable instead '%s'" data))
+    (error "Error: metoffice-datahub-lib--decode-info data not a hashtable instead '%s'" data))
   
   ;; The hashtable has a "features" vector, the first element of which
   ;; is a hashtable which contains the actual information we want.
@@ -679,12 +728,12 @@ It also returns the long parsed string description."
   ;; another vector of the data (timeSeries) each of which is a
   ;; hashtable of useful facts.
   (let* ((features (aref (gethash "features" data) 0))
-         (geometry (gethash "geometry" features))
+         ;; (geometry (gethash "geometry" features))
          (properties (gethash "properties" features))
          (location-name (gethash "name" (gethash "location" properties)))
-         (modelrundate (gethash "modelRunDate" properties))
+         ;; (modelrundate (gethash "modelRunDate" properties))
          (timeseries (gethash "timeSeries" properties))
-         (weather-data (metoffice-datahub-lib--extract-current-timeseries 
+         (weather-data (metoffice-datahub-lib--extract-current-timeseries
                         timeseries))
          (current-weather (car weather-data))
 
@@ -705,13 +754,13 @@ It also returns the long parsed string description."
     desc))
 
 (defun metoffice-datahub-lib--decode-daily-info (&optional data)
-  "Takes the JSON data from the API and extracts current weather
+  "Take the JSON data from the API and extracts current weather.
 
-Takes one argument which should be the data from the API and should be
+Takes one argument which should be the DATA from the API and should be
 from the daily query, otherwise it uses the cached response in
 `metoffice-datahub-lib-cached-response'.
 
-At the end it sets the following variables: 
+At the end it sets the following variables:
 `metoffice-datahub-lib-current-weather' current weather hash-table
 `metoffice-datahub-lib-long-description' long parsed string description
 of the most current forecast
@@ -726,7 +775,7 @@ It also returns the long parsed string description."
     (setq data metoffice-datahub-lib-cached-response))
 
   (unless (hash-table-p data)
-    (error "metoffice-datahub-lib--decode-info data not a hashtable instead '%s'" data))
+    (error "Error: metoffice-datahub-lib--decode-info data not a hashtable instead '%s'" data))
   
   ;; The hashtable has a "features" vector, the first element of which
   ;; is a hashtable which contains the actual information we want.
@@ -735,12 +784,12 @@ It also returns the long parsed string description."
   ;; another vector of the data (timeSeries) each of which is a
   ;; hashtable of useful facts.
   (let* ((features (aref (gethash "features" data) 0))
-         (geometry (gethash "geometry" features))
+         ;; (geometry (gethash "geometry" features))
          (properties (gethash "properties" features))
          (location-name (gethash "name" (gethash "location" properties)))
-         (modelrundate (gethash "modelRunDate" properties))
+         ;; (modelrundate (gethash "modelRunDate" properties))
          (timeseries (gethash "timeSeries" properties))
-         (weather-data (metoffice-datahub-lib--extract-current-timeseries 
+         (weather-data (metoffice-datahub-lib--extract-current-timeseries
                         timeseries))
          (current-weather (car weather-data))
 
@@ -768,14 +817,16 @@ It also returns the long parsed string description."
 
 
 (defun metoffice-datahub-lib--extract-timeseries (&optional data)
-  "Takes an API data response, returns the timeseries of events which is
-a vector of hash-tables.  Checks the cached response if no data provided"
+  "Take an API DATA response, return the vector timeseries.
+
+Returns a vector of hash-tables.  Checks the cached response if no
+data provided."
 
   (unless data
     (setq data metoffice-datahub-lib-cached-response))
   
   (unless (hash-table-p data)
-    (error "metoffice-datahub-lib-forecast data not a hashtable instead '%s'" data))
+    (error "Error: metoffice-datahub-lib-forecast data not a hashtable instead '%s'" data))
 
   ;; Its a vector data, the first element is hash-table, we extract
   ;; the features, from there the hashtable of properties, from there
@@ -784,21 +835,23 @@ a vector of hash-tables.  Checks the cached response if no data provided"
 
 
 (defun metoffice-datahub-lib-forecast (&optional max-events string-func data)
-  "Creates a popup buffer of a weather forecast.
+  "Create a popup buffer of a weather forecast.
 
 Takes three arguments:
 
-`max-events' which is an integer defining how many after the current
+`MAX-EVENTS' which is an integer defining how many after the current
 event should be parsed out, how far to look in the future.  If missing
 this uses `metoffice-datahub-lib-forecast-max-events' and if nil parses
 all events.
 
-`string-func' is the function used to parse the timeSeries of events
+`STRING-FUNC' is the function used to parse the timeSeries of events
  into strings to insert into the buffer, by default it guesses based on
  query-type.
 
-`data' is the data you want it to parse, if missing uses
-the cached response in `metoffice-datahub-lib-cached-response'"
+`DATA' is the data you want it to parse, if missing uses
+the cached response in `metoffice-datahub-lib-cached-response'
+
+Output buffer named by `metoffice-datahub-lib-forecast-buffer' variable."
 
   (interactive)
 
@@ -806,23 +859,23 @@ the cached response in `metoffice-datahub-lib-cached-response'"
     (setq data metoffice-datahub-lib-cached-response))
   
   (unless (hash-table-p data)
-    (error "metoffice-datahub-lib-forecast data not a hashtable instead '%s'" data))
+    (error "Error: metoffice-datahub-lib-forecast data not a hashtable instead '%s'" data))
 
   (when (and max-events
              (not (integerp max-events)))
-    (error "metoffice-datahub-lib-forecast max-events is not an int '%s'" max-events))
+    (error "Error: metoffice-datahub-lib-forecast max-events is not an int '%s'" max-events))
 
   (unless max-events
     (setq max-events metoffice-datahub-lib-forecast-max-events))
 
   (let* ((features (aref (gethash "features" data) 0))
-         (geometry (gethash "geometry" features))
+         ;; (geometry (gethash "geometry" features))
          (properties (gethash "properties" features))
          (location-name (gethash "name" (gethash "location" properties)))
-         (modelrundate (gethash "modelRunDate" properties))
+         ;; (modelrundate (gethash "modelRunDate" properties))
          (timeseries (gethash "timeSeries" properties))
          
-         (weather-data (metoffice-datahub-lib--extract-current-timeseries 
+         (weather-data (metoffice-datahub-lib--extract-current-timeseries
                         timeseries))
          (weather-index (cadr weather-data))
          (vlen (length timeseries))
@@ -853,7 +906,7 @@ the cached response in `metoffice-datahub-lib-cached-response'"
                 ((cl-equalp metoffice-datahub-lib-query-type
                             "hourly")
                  (insert (metoffice-datahub-lib--hour-based-weather-to-string
-                          location-name 
+                          location-name
                           current-weather))
                  (insert "\n\n"))
                 
@@ -861,14 +914,14 @@ the cached response in `metoffice-datahub-lib-cached-response'"
                 ((cl-equalp metoffice-datahub-lib-query-type
                             "three-hourly")
                  (insert (metoffice-datahub-lib--hour-based-weather-to-string
-                          location-name 
+                          location-name
                           current-weather))
                  (insert "\n\n"))
                 
                 ((cl-equalp metoffice-datahub-lib-query-type
                             "daily")
                  (insert (metoffice-datahub-lib--hour-based-weather-to-string
-                          location-name 
+                          location-name
                           current-weather))
                  (insert "\n\n"))
                 
@@ -883,3 +936,4 @@ the cached response in `metoffice-datahub-lib-cached-response'"
 
 
 (provide 'metoffice-datahub-lib)
+;;; metoffice-datahub-lib.el ends here

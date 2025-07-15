@@ -1,4 +1,4 @@
-;;; metoffice-datahub-mode.el --- A minor mode that puts a current weather symbol into your modeline using metoffice-datahub-lib -*- lexical-binding: t -*-
+;;; metoffice-datahub-mode.el --- Use metoffice-datahub-lib to show weather in modeline -*- lexical-binding: t -*-
 
 ;; Copyright 2025 - Twitchy Ears
 
@@ -31,7 +31,7 @@
 
 ;;; Commentary:
 ;;
-;; First get metoffice-datahub-lib configured then use: 
+;; First get metoffice-datahub-lib configured then use:
 ;;
 ;; (use-package metoffice-datahub-mode
 ;;  :after metoffice-datahub-lib
@@ -53,38 +53,52 @@
 ;; (setq metoffice-datahub-mode-temp-symbols
 ;;         '(" TEMPERATURE" " TEMPERATURE" " TEMPERATURE"))
 
+;;; Code:
+
 (require 'metoffice-datahub-lib)
 
-(defvar metoffice-datahub-mode-current-weather-format "[%s]" "The format string which will contain the current weather on the modeline")
+(defvar metoffice-datahub-mode-current-weather-format "[%s]" "The format string which will contain the current weather on the modeline.")
 
 (defvar metoffice-datahub-mode-current-weather-short "[W]"
-  "The short version of the weather shown in the modeline, formatted according to the metoffice-datahub-mode-current-weather-format")
+  "The short version of the weather shown in the modeline.
+
+Formatted according to the metoffice-datahub-mode-current-weather-format.")
 
 (defvar metoffice-datahub-mode-data-update-in-seconds (* 60 60)
-  "Seconds between calling refreshes of the metoffice data from the API, should make sense with your metoffice-datahub-lib-data-cache-maxage setting")
+  "Seconds between calling refreshes of the metoffice data.
+
+This needs coordinating with your metoffice-datahub-lib-data-cache-maxage
+setting as this calls refresh.")
 
 (defvar metoffice-datahub-mode-modeline-update-in-seconds (* 5 60)
-  "Seconds between updating the string displayed on the modeline")
+  "Seconds between updating the string displayed on the modeline.")
 
 (defvar metoffice-datahub-mode-data-update-timer nil
-  "Holds the timer for refreshing the weather")
+  "Holds the timer for refreshing the weather.")
 
 (defvar metoffice-datahub-mode-modeline-update-timer nil
-  "Holds the timer for refreshing the modeline string")
+  "Holds the timer for refreshing the modeline string.")
 
-(defvar metoffice-datahub-mode-use-symbol t "Use the symbol in the modeline and not the short textual description")
+(defvar metoffice-datahub-mode-use-symbol t "Use the symbol in the modeline and not the short textual description.")
 
-(defvar metoffice-datahub-mode-indicate-temp t "Add a second symbol/string to indicate how hot/cold the temperature is at a glance")
+(defvar metoffice-datahub-mode-indicate-temp t "Add a second symbol/string to indicate how hot/cold the temperature is at a glance.")
 
 (defvar metoffice-datahub-mode-temp-thresholds '(5 19)
-  "A list of two temperatures, anything under the first element will be cold, anything over the second will be hot, anything in between will be neutral")
+  "A list of two temperatures to judge hot/cold ranges for output.
+
+Anything under the first element will be cold, anything over the second
+will be hot, anything in between will be neutral.")
 
 (defvar metoffice-datahub-mode-temp-symbols '("🥶" "🆗" "🥵") "A list of three elements used to display temperature in combination with metoffice-datahub-mode-temp-thresholds broadly the list is '(cold regular hot) if an element is a blank string then nothing will be displayed in that temperature range, if it contains the string TEMPERATURE then the actual temperature will be put there.")
 
-(defvar metoffice-datahub-mode-after-hook nil "Hook that runs after the mode is turned on or off")
+(defvar metoffice-datahub-mode-after-hook nil "Hook that runs after the mode is turned on or off.")
 
 (defun metoffice-datahub-mode--temp-symbol (temp)
-  "Takes a temperature which is expected to be a float, then looks up the correct symbol or string to return from metoffice-datahub-mode-temp-symbols based on metoffice-datahub-mode-temp-thresholds"
+  "Takes a TEMP temperature, return a symbol representing it.
+
+The TEMP is expected to be a float, then looks up the correct symbol or
+string to return from `metoffice-datahub-mode-temp-symbols' based on
+`metoffice-datahub-mode-temp-thresholds'."
   (when (and metoffice-datahub-mode-indicate-temp
              (numberp temp)
              (= 2 (length metoffice-datahub-mode-temp-thresholds))
@@ -107,20 +121,22 @@
       
 
 (defun metoffice-datahub-mode-update-modeline ()
-  "Creates a modeline string by looking at the metoffice-datahub-lib-*
-variables for the current weather.  If metoffice-datahub-mode-use-symbol
-is true then it will use the metoffice-datahub-lib-symbol instead of the
-textual description.  Ifmetoffice-datahub-mode-indicate-temp is true it
-will append a second symbol/string as per
-metoffice-datahub-mode--temp-symbol based on the current `feelsLikeTemp'
-value from the current weather.
+  "Create a modeline string from datahub data.
 
-Sets the current metoffice-datahub-lib-long-description to be a
+Looking at the metoffice-datahub-lib-* variables for the current
+weather.  If `metoffice-datahub-mode-use-symbol' is true then it will
+use the `metoffice-datahub-lib-symbol' instead of the textual description.
+
+If `metoffice-datahub-mode-indicate-temp' is true it will append a second
+symbol/string as per `metoffice-datahub-mode--temp-symbol' based on the
+`feelsLikeTemp' value from the current weather.
+
+Sets the current `metoffice-datahub-lib-long-description' to be a
 'help-echo tooltip on the string and formats it into
-metoffice-datahub-mode-current-weather-format which should be a format
+`metoffice-datahub-mode-current-weather-format' which should be a format
 string with a single %s where you want the output to go.
 
-This is set into metoffice-datahub-mode-current-weather-short and also
+This is set into `metoffice-datahub-mode-current-weather-short' and also
 returned from the function."
 
   (interactive)
@@ -154,12 +170,14 @@ returned from the function."
       metoffice-datahub-mode-current-weather-short)))
 
 (defun metoffice-datahub-mode-output-modeline ()
+  "Return the current weather modeline string."
   (interactive)
   (if metoffice-datahub-mode-current-weather-short
       metoffice-datahub-mode-current-weather-short
     ""))
 
 (defun metoffice-datahub-mode--already-in-modeline-p ()
+  "Predicate function, return t if mode outputting to modeline, otherwise nil."
   (let ((results (cl-search
                      "(:eval (metoffice-datahub-mode-output-modeline))"
                      (format "%s" mode-line-misc-info))))
@@ -229,10 +247,9 @@ returned from the function."
 
       (when metoffice-datahub-mode-modeline-update-timer
           (cancel-timer metoffice-datahub-mode-modeline-update-timer)
-          (setq metoffice-datahub-mode-modeline-update-timer nil))
-
-      )))
+          (setq metoffice-datahub-mode-modeline-update-timer nil)))))
 
 
 
 (provide 'metoffice-datahub-mode)
+;;; metoffice-datahub-mode.el ends here
