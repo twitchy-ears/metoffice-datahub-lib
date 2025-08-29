@@ -424,7 +424,7 @@ to disk then parses it out into useful variables for later."
     (url-retrieve url
                   callback
                   nil
-                  metoffice-datahub-lib-verbose-mode)
+                  (not metoffice-datahub-lib-verbose-mode)) ;; invert to silence
     (run-hooks 'metoffice-datahub-lib-after-fetch-hook)))
   
 
@@ -868,6 +868,11 @@ Output buffer named by `metoffice-datahub-lib-forecast-buffer' variable."
   (unless max-events
     (setq max-events metoffice-datahub-lib-forecast-max-events))
 
+  ;; Delete the previous buffer
+  (let ((existing-buf (get-buffer metoffice-datahub-lib-forecast-buffer)))
+    (when existing-buf
+      (kill-buffer existing-buf)))
+  
   (let* ((features (aref (gethash "features" data) 0))
          ;; (geometry (gethash "geometry" features))
          (properties (gethash "properties" features))
@@ -930,9 +935,16 @@ Output buffer named by `metoffice-datahub-lib-forecast-buffer' variable."
                    current-weather))
         
           (cl-incf weather-index)))
-    
-    (pop-to-buffer metoffice-datahub-lib-forecast-buffer)
-    (goto-char (point-min)))))
+
+      (metoffice-datahub-forecast-mode)
+      (pop-to-buffer metoffice-datahub-lib-forecast-buffer)
+      (goto-char (point-min)))))
+
+
+(define-derived-mode metoffice-datahub-forecast-mode
+  special-mode
+  "Metoffice-Forecast"
+  "Major mode for viewing metoffice forecasts.")
 
 
 (provide 'metoffice-datahub-lib)
