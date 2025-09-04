@@ -65,6 +65,8 @@ If you want to hook something into this there is a `metoffice-datahub-lib-after-
 
 You can also run `metoffice-datahub-lib-forecast` to get a `*forecast*` buffer describing all known future weather events, or change the `metoffice-datahub-lib-forecast-max-events` variable to limit it to the next N events, something like 3 or 5 is generally enough to get an idea without having a hugely noisy buffer.
 
+If you want that to be more legible then try `metoffice-datahub-lib-forecast-table` to get a `*forecast*` buffer describing some features of the upcoming forecast formatted as an org-mode table.
+
 
 # metoffice-datahub-mode
 

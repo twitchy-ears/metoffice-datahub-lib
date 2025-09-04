@@ -77,6 +77,9 @@
 ;; If you want to see a fuller forecast then try the
 ;; metoffice-datahub-lib-forecast function which will create one in a
 ;; popup buffer.
+;;
+;; You can also use metoffice-datahub-lib-forecast-table to get a buffer
+;; with the upcoming forecast formatted as an org-mode table.
 
 ;;; Code:
 
@@ -84,6 +87,7 @@
 (require 'url)
 (require 'parse-time)
 (require 'cl-lib)
+(require 'org-table)
 
 (defvar metoffice-datahub-lib-verbose-mode nil "If set to t then functions may output various progress and debugging messages.")
 
@@ -95,6 +99,10 @@ Used by metoffice-datahub-lib-forecast function.")
 (defvar metoffice-datahub-lib-forecast-max-events
   nil
   "How many events included in forecast buffer, nil means all of them.")
+
+(defvar metoffice-datahub-lib-forecast-spacer
+  "\n\n"
+  "String appended to each line of forecast, by default two newlines to ensure a gap between them")
 
 (defvar metoffice-datahub-lib-apikey nil
   "The API key for your metoffice datahub account.
@@ -214,6 +222,82 @@ See https://www.metoffice.gov.uk/services/data/datapoint/code-definitions.")
   "An alist of weather codes to emojis they describe.
 
 See https://www.metoffice.gov.uk/services/data/datapoint/code-definitions")
+
+(defvar metoffice-datahub-lib-response-to-string-time-format
+  "%F %H:%M:%S %Z"
+  "String used by functions to convert timeSeries data into a string.
+
+See metoffice-datahub-lib--hour-based-weather-to-string and 
+ metoffice-datahub-lib--day-based-weather-to-string")
+
+(defvar metoffice-datahub-lib-hourly-response-to-string-output-format
+  "%l (%t) %d - Feels Like: %f°C (%m-%M°C), Rain: %r, Wind: %w m/s, UV: %u, Humidity: %h%, Snow: %s"
+  "Final format used to convert hourly timeSeries data into a long string.
+
+See metoffice-datahub-lib--hour-based-weather-to-string
+
+The formatting options are:
+%l = current location
+%t = current time (see metoffice-datahub-lib-response-to-string-time-format)
+%q = query type
+%d = description of significant weather
+%x = unicode character describing significant weather
+%f = feels like temperature in C
+%m = minimum temperature in C
+%M = maximum temperature in C
+%r = rain chance / amount
+%w = wind speed in metres/sec
+%u = UV index
+%h = humidity in percentage
+%s = snow chance / amount")
+
+(defvar metoffice-datahub-lib-hourly-response-to-csv-output-format
+  "%t, %f°C, %r, %s, %d"
+  "Used when outputting tables of forecasts
+
+Used by metoffice-datahub-lib--hour-based-weather-to-csv when called from
+metoffice-datahub-lib-forecast-table.
+
+Formatting codes from
+metoffice-datahub-lib-hourly-response-to-string-output-format")
+
+
+(defvar metoffice-datahub-lib-daily-response-to-string-output-format
+  "%l (%t) %d / %D - Temp Feels Like: %f°C/%F°C, Rain: %p%/%P%, Wind: %w/%W m/s, UV: %u, Humidity: %h%/%H%, Snow: %s%/%S%"
+  "Final format used to convert daily timeSeries data into a long string.
+
+See metoffice-datahub-lib--day-based-weather-to-string
+
+The formatting options are:
+%l = current location
+%t = current time (see metoffice-datahub-lib-response-to-string-time-format)
+%q = query type
+%d = description of significant weather for day
+%D = description of significant weather for night
+%x = unicode character describing significant weather for day
+%X = unicode character describing significant weather for night
+%f = feels like temperature in C for day
+%F = feels like temperature in C for night
+%p = chance of precipitation for day
+%P = chance of precipitation for night
+%w = wind speed in metres/sec for day
+%W = wind speed in metres/sec for night
+%h = humidity in percentage for day
+%H = humidity in percentage for night
+%s = snow chance / amount for day
+%S = snow chance / amount for night")
+
+(defvar metoffice-datahub-lib-daily-response-to-csv-output-format
+  "%t, %f/%F°C, %p%/%P%, %s%/%S%, %x/%X"
+  "Used when outputting tables of forecasts
+
+Used by metoffice-datahub-lib--day-based-weather-to-csv when called from
+metoffice-datahub-lib-forecast-table.
+
+Formatting codes from
+metoffice-datahub-lib-daily-response-to-string-output-format")
+
+
 
 (defvar metoffice-datahub-lib-after-fetch-hook
   nil
@@ -428,7 +512,7 @@ to disk then parses it out into useful variables for later."
     (run-hooks 'metoffice-datahub-lib-after-fetch-hook)))
   
 
-(defun metoffice-datahub-lib-refresh ()
+(defun metoffice-datahub-lib-refresh (&optional force)
   "Either refresh the data and variables from cache, or pull from the API.
 
 Intended as the way the user or another elisp system on a timer should
@@ -441,15 +525,24 @@ It checks for the existence of a cache file from
  and other things parsed from it to make sure they are all consistent.
 
 Otherwise it calls `metoffice-datahub-lib-fetch' to fetch fresh data
- from the API and that then caches and parses the output."
+ from the API and that then caches and parses the output.
 
-  (interactive)
+If called with a prefix argument will delete the cache on both disk and
+ variable to force a refresh."
+
+  (interactive "P")
 
   ;; If we don't have it but the file exists, then either load from
   ;; cache or fetch
   (let ((cache-file (if (not metoffice-datahub-lib-data-cache)
                         (metoffice-datahub-lib--generate-data-cache)
                       metoffice-datahub-lib-data-cache)))
+
+  (when force
+    (when (file-exists-p cache-file)
+      (delete-file cache-file))
+    (setq metoffice-datahub-lib-cached-response nil))
+    
     (if (and (file-exists-p cache-file)
              (metoffice-datahub-lib--file-age-check-p cache-file))
         
@@ -569,45 +662,81 @@ This version expects the format of the hourly/three-hourly queries."
   (let* ((curr-time-data (encode-time
                           (parse-time-string
                            (gethash "time" current-weather))))
-         (curr-time (format-time-string "%F %H:%M:%S %Z" curr-time-data))
+         (curr-time (format-time-string
+                     metoffice-datahub-lib-response-to-string-time-format
+                     curr-time-data))
          (curr-pop (gethash "probOfPrecipitation" current-weather))
          (curr-precip-amount (gethash "totalPrecipAmount" current-weather))
          (curr-humidity (gethash "screenRelativeHumidity" current-weather))
          (curr-snow (gethash "probOfSnow" current-weather))
          (curr-snow-amount (gethash "totalSnowAmount" current-weather))
          (curr-uv (gethash "uvIndex" current-weather))
-         (curr-flt (gethash "feelsLikeTemp" current-weather))
-         (curr-min-temp (gethash "minScreenAirTemp" current-weather))
-         (curr-max-temp (gethash "maxScreenAirTemp" current-weather))
+
+         ;; the "three-hourly" uses feelsLikeTemp but the "hourly"
+         ;; uses feelsLikeTemperature so make a guess.
+         ;;
+         ;; Round into the nearest int
+         (curr-flt (format
+                    "%d"
+                    (fround
+                     (if (gethash "feelsLikeTemp" current-weather)
+                         (gethash "feelsLikeTemp" current-weather)
+                       (gethash "feelsLikeTemperature" current-weather)))))
+         
+         (curr-min-temp (format
+                         "%d"
+                         (fround (gethash "minScreenAirTemp" current-weather))))
+         (curr-max-temp (format
+                         "%d"
+                         (fround (gethash "maxScreenAirTemp" current-weather))))
+         
          (curr-ws (gethash "windSpeed10m" current-weather))
          (curr-desc (metoffice-datahub-lib--sig-weather-code-to-string
                      (gethash "significantWeatherCode" current-weather)))
-         
+         (curr-symbol (metoffice-datahub-lib--sig-weather-code-to-symbol
+                       (gethash "significantWeatherCode" current-weather)))
+
+         ;; Include the amount of precipitation if we have it
          (rain-str (if (> curr-precip-amount 0)
                        (format "%s%% (%smm)"
                                curr-pop
                                curr-precip-amount)
                      (format "%s%%" curr-pop)))
          
-         (snow-str (if (> curr-snow-amount 0)
-                       (format "%s%% (%smm)"
-                               curr-snow
-                               curr-snow-amount)
-                     (format "%s%%" curr-snow)))
+         (snow-str (cond
+
+                    ;; "three-hourly" includes probOfSnow even if its
+                    ;; 0, "hourly" only includes the amount
+                    ((numberp curr-snow)
+                     (if (> curr-snow-amount 0)
+                         (format "%s%% (%smm)"
+                                 curr-snow
+                                 curr-snow-amount)
+                       (format "%s%%" curr-snow)))
+
+                    ;; This should catch the "hourly" when we have an
+                    ;; amount but not a probability.
+                    ((numberp curr-snow-amount)
+                     (format "%smm" curr-snow-amount))))
+
+         (out-fmt-string (list (cons ?l location-name)
+                               (cons ?t curr-time)
+                               (cons ?q metoffice-datahub-lib-query-type)
+                               (cons ?d curr-desc)
+                               (cons ?x curr-symbol)
+                               (cons ?f curr-flt)
+                               (cons ?m curr-min-temp)
+                               (cons ?M curr-max-temp)
+                               (cons ?r rain-str)
+                               (cons ?w curr-ws)
+                               (cons ?u curr-uv)
+                               (cons ?h curr-humidity)
+                               (cons ?s snow-str)))
+
+         (desc (format-spec
+                metoffice-datahub-lib-hourly-response-to-string-output-format
+                out-fmt-string t)))
            
-         (desc (format "%s (%s - %s) %s - Temp Feels Like: %s°C (%s-%s), Rain: %s, Wind: %s m/s, UV: %s, Humidity: %s%%, Snow: %s"
-                       location-name
-                       curr-time
-                       metoffice-datahub-lib-query-type
-                       curr-desc
-                       curr-flt
-                       curr-min-temp
-                       curr-max-temp
-                       rain-str
-                       curr-ws
-                       curr-uv
-                       curr-humidity
-                       snow-str)))
     desc))
 
 (defun metoffice-datahub-lib--day-based-weather-to-string (location-name current-weather)
@@ -630,7 +759,9 @@ This version expects the format of the daily query."
   (let* ((curr-time-data (encode-time
                           (parse-time-string
                            (gethash "time" current-weather))))
-         (curr-time (format-time-string "%F %H:%M:%S %Z" curr-time-data))
+         (curr-time (format-time-string
+                     metoffice-datahub-lib-response-to-string-time-format
+                     curr-time-data))
 
          (day-ws (gethash "midday10MWindSpeed" current-weather))
          (night-ws (gethash "midnight10MWindSpeed" current-weather))
@@ -654,31 +785,70 @@ This version expects the format of the daily query."
 
          (night-desc (metoffice-datahub-lib--sig-weather-code-to-string
                       (gethash "nightSignificantWeatherCode" current-weather)))
-         
-         (desc (format "%s (%s - %s) %s / %s - Temp Feels Like: %s°C/%s°C, Rain: %s%%/%s%%, Wind: %s/%s m/s, UV: %s, Humidity: %s%%/%s%%, Snow: %s%%/%s%%"
-                       location-name
-                       curr-time
-                       metoffice-datahub-lib-query-type
-                       
-                       day-desc
-                       night-desc
 
-                       day-max-flt
-                       night-min-flt
+         (day-symbol (metoffice-datahub-lib--sig-weather-code-to-symbol
+                      (gethash "daySignificantWeatherCode" current-weather)))
 
-                       day-pop
-                       night-pop
+         (night-symbol (metoffice-datahub-lib--sig-weather-code-to-symbol
+                      (gethash "nightSignificantWeatherCode" current-weather)))
 
-                       day-ws
-                       night-ws
 
-                       day-max-uv
+         (out-fmt-string (list (cons ?l location-name)
+                               (cons ?t curr-time)
+                               (cons ?q metoffice-datahub-lib-query-type)
+                               
+                               (cons ?d day-desc)
+                               (cons ?D night-desc)
 
-                       day-humidity
-                       night-humidity
+                               (cons ?x day-symbol)
+                               (cons ?X night-symbol)
 
-                       day-snow
-                       night-snow)))
+                               (cons ?f day-max-flt)
+                               (cons ?F night-min-flt)
+
+                               (cons ?p day-pop)
+                               (cons ?P night-pop)
+
+                               (cons ?w day-ws)
+                               (cons ?W night-ws)
+
+                               (cons ?u day-max-uv)
+
+                               (cons ?h day-humidity)
+                               (cons ?H night-humidity)
+
+                               (cons ?s day-snow)
+                               (cons ?S night-snow)))
+
+         (desc (format-spec
+                metoffice-datahub-lib-daily-response-to-string-output-format
+                out-fmt-string t)))
+    
+    ;; (desc (format "%s (%s) %s / %s - Temp Feels Like: %s°C/%s°C, Rain: %s%%/%s%%, Wind: %s/%s m/s, UV: %s, Humidity: %s%%/%s%%, Snow: %s%%/%s%%"
+    ;;               location-name
+    ;;               curr-time
+    ;;               ;; metoffice-datahub-lib-query-type
+    
+    ;;               day-desc
+    ;;               night-desc
+    
+    ;;               day-max-flt
+    ;;               night-min-flt
+    
+    ;;               day-pop
+    ;;               night-pop
+    
+    ;;               day-ws
+    ;;               night-ws
+    
+    ;;               day-max-uv
+    
+    ;;               day-humidity
+    ;;               night-humidity
+    
+    ;;               day-snow
+    ;;               night-snow)))
+    
     desc))
 
 
@@ -834,6 +1004,54 @@ data provided."
   (gethash "timeSeries" (gethash "properties" (aref (gethash "features" data) 0))))
 
 
+(defun metoffice-datahub-lib--hour-based-weather-to-csv (location current-weather)
+  "Output some parts of forecast as CSV
+
+time, temperature, rain-chance, snow, description"
+  (let ((metoffice-datahub-lib-hourly-response-to-string-output-format
+         metoffice-datahub-lib-hourly-response-to-csv-output-format))
+    (metoffice-datahub-lib--hour-based-weather-to-string location current-weather)))
+
+(defun metoffice-datahub-lib--day-based-weather-to-csv (location current-weather)
+  "Output some parts of forecast as CSV
+
+time, temperature, rain-chance, snow, description"
+  (let ((metoffice-datahub-lib-daily-response-to-string-output-format
+         metoffice-datahub-lib-daily-response-to-csv-output-format))
+    (metoffice-datahub-lib--day-based-weather-to-string location current-weather)))
+
+(defun metoffice-datahub-lib-forecast-table (&optional max-events data)
+  "Create a popup buffer of a weather forecast as an org-mode table"
+  (interactive)
+
+  (let ((metoffice-datahub-lib-forecast-spacer "\n")
+        (func (cond ((cl-equalp metoffice-datahub-lib-query-type
+                                "hourly")
+                     #'metoffice-datahub-lib--hour-based-weather-to-csv)
+                    ((cl-equalp metoffice-datahub-lib-query-type
+                                "three-hourly")
+                     #'metoffice-datahub-lib--hour-based-weather-to-csv)
+                    ((cl-equalp metoffice-datahub-lib-query-type
+                                "daily")
+                     #'metoffice-datahub-lib--day-based-weather-to-csv))))
+    
+    (metoffice-datahub-lib-forecast max-events
+                                    func
+                                    data)
+    
+    (let ((buf (get-buffer-create metoffice-datahub-lib-forecast-buffer)))
+      (with-current-buffer buf
+        (let ((buffer-read-only nil))
+          (goto-char (point-min))
+          (forward-line) ;; after the heading
+          (insert "\ntime, temp, rain, snow, type\n")
+          (forward-line -1) ;; before the heading
+          (beginning-of-line)
+          (org-table-convert-region (point) (point-max) nil)
+          (goto-char (org-table-begin))
+          (org-table-insert-hline))))))
+  
+
 (defun metoffice-datahub-lib-forecast (&optional max-events string-func data)
   "Create a popup buffer of a weather forecast.
 
@@ -902,18 +1120,20 @@ Output buffer named by `metoffice-datahub-lib-forecast-buffer' variable."
                       (current-time-string)))
       
       (while (< weather-index last-event)
-        ;; (message "looking at timeseries index %s" weather-index)
+        ;; (message "looking at timeseries index %s, query-type %s"
+        ;;          weather-index
+        ;;          metoffice-datahub-lib-query-type)
         (let ((current-weather (aref timeseries weather-index)))
           (cond ((functionp string-func)
                  (insert (funcall string-func location-name current-weather))
-                 (insert "\n\n"))
+                 (insert metoffice-datahub-lib-forecast-spacer))
 
                 ((cl-equalp metoffice-datahub-lib-query-type
                             "hourly")
                  (insert (metoffice-datahub-lib--hour-based-weather-to-string
                           location-name
                           current-weather))
-                 (insert "\n\n"))
+                 (insert metoffice-datahub-lib-forecast-spacer))
                 
                 
                 ((cl-equalp metoffice-datahub-lib-query-type
@@ -921,14 +1141,14 @@ Output buffer named by `metoffice-datahub-lib-forecast-buffer' variable."
                  (insert (metoffice-datahub-lib--hour-based-weather-to-string
                           location-name
                           current-weather))
-                 (insert "\n\n"))
+                 (insert metoffice-datahub-lib-forecast-spacer))
                 
                 ((cl-equalp metoffice-datahub-lib-query-type
                             "daily")
-                 (insert (metoffice-datahub-lib--hour-based-weather-to-string
+                 (insert (metoffice-datahub-lib--day-based-weather-to-string
                           location-name
                           current-weather))
-                 (insert "\n\n"))
+                 (insert metoffice-datahub-lib-forecast-spacer))
                 
                 (t "Couldn't understand query type '%s' to parse:\n%s"
                    metoffice-datahub-lib-query-type
@@ -937,6 +1157,7 @@ Output buffer named by `metoffice-datahub-lib-forecast-buffer' variable."
           (cl-incf weather-index)))
 
       (metoffice-datahub-forecast-mode)
+      (visual-line-mode t)
       (pop-to-buffer metoffice-datahub-lib-forecast-buffer)
       (goto-char (point-min)))))
 
