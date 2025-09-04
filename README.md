@@ -115,6 +115,10 @@ Showing the `metoffice-datahub-lib-forecast-table` function in its default outpu
 ![Image showing a table with the headings time, temp, rain, snow, type - then data for 15:00 onwards on a day](https://github.com/twitchy-ears/metoffice-datahub-lib/blob/assets/metoffice-datahub-lib-forecast-table.png)
 
 
+Showing the `metoffice-datahub-lib-forecast-table` function in its default output for daily forecasts
+![Image showing a table with the headings time, temp, rain, snow, type shown as unicode - then data for Thursday onewards to Tuesday](https://github.com/twitchy-ears/metoffice-datahub-lib/blob/assets/metoffice-datahub-lib-forecast-table-daily.png)
+
+
 
 # Bugs
 
