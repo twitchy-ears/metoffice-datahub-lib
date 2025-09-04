@@ -4,8 +4,8 @@
 
 ;; Author: Twitchy Ears https://github.com/twitchy-ears/
 ;; URL: https://github.com/twitchy-ears/metoffice-datahub-lib
-;; Version: 0.1
-;; Package-Requires ((emacs "30.1") cl-lib url json parse-time)
+;; Version: 0.2
+;; Package-Requires ((emacs "30.1") cl-lib url json parse-time org-table)
 ;; Keywords: weather api
 
 ;; This file is not part of GNU Emacs.
@@ -28,6 +28,7 @@
 ;;; History
 ;;
 ;; 2025-07-15 Initial version.
+;; 2025-09-04 Outputting table formatted forecasts
 
 ;;; Commentary:
 ;;
