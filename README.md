@@ -111,6 +111,9 @@ Just the emojis, notice I have customised the `metoffice-datahub-mode-temp-symbo
 Showing the pure text config, its Heavy rain at the minute and feels like 13 degrees C
 ![Image showing the text "Heavy rain 13"](https://github.com/twitchy-ears/metoffice-datahub-lib/blob/assets/metoffice-datahub-lib-just-text.png)
 
+Showing the `metoffice-datahub-lib-forecast-table` function in its default output
+![Image showing a table with the headings time, temp, rain, snow, type - then data for 15:00 onwards on a day](https://github.com/twitchy-ears/metoffice-datahub-lib/blob/assets/metoffice-datahub-lib-forecast-table.png)
+
 
 
 # Bugs
