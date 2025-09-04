@@ -261,6 +261,12 @@ metoffice-datahub-lib-forecast-table.
 Formatting codes from
 metoffice-datahub-lib-hourly-response-to-string-output-format")
 
+(defvar metoffice-datahub-lib-hourly-forecast-header
+  "time, temp, rain, snow, type"
+  "Used when outputting tables of forecasts
+
+See metoffice-datahub-lib-forecast-table")
+
 
 (defvar metoffice-datahub-lib-daily-response-to-string-output-format
   "%l (%t) %d / %D - Temp Feels Like: %f°C/%F°C, Rain: %p%/%P%, Wind: %w/%W m/s, UV: %u, Humidity: %h%/%H%, Snow: %s%/%S%"
@@ -297,7 +303,11 @@ metoffice-datahub-lib-forecast-table.
 Formatting codes from
 metoffice-datahub-lib-daily-response-to-string-output-format")
 
+(defvar metoffice-datahub-lib-daily-forecast-header
+  "time, temp, rain, snow, type"
+  "Used when outputting tables of forecasts
 
+See metoffice-datahub-lib-forecast-table")
 
 (defvar metoffice-datahub-lib-after-fetch-hook
   nil
@@ -1046,10 +1056,24 @@ time, temperature, rain-chance, snow, description"
     (metoffice-datahub-lib--day-based-weather-to-string location current-weather)))
 
 (defun metoffice-datahub-lib-forecast-table (&optional max-events data)
-  "Create a popup buffer of a weather forecast as an org-mode table"
+  "Create a popup buffer of a weather forecast as an org-mode table
+
+This formats its data-rows using the formats in these variables:
+metoffice-datahub-lib-hourly-response-to-csv-output-format
+metoffice-datahub-lib-daily-response-to-csv-output-format
+
+And headers from:
+metoffice-datahub-lib-hourly-forecast-header
+metoffice-datahub-lib-daily-forecast-header
+
+If you want to customise the output you should change both to match
+
+This requires the use of org-table which ships with emacs."
+
   (interactive)
 
   (let ((metoffice-datahub-lib-forecast-spacer "\n")
+
         (func (cond ((cl-equalp metoffice-datahub-lib-query-type
                                 "hourly")
                      #'metoffice-datahub-lib--hour-based-weather-to-csv)
@@ -1058,7 +1082,18 @@ time, temperature, rain-chance, snow, description"
                      #'metoffice-datahub-lib--hour-based-weather-to-csv)
                     ((cl-equalp metoffice-datahub-lib-query-type
                                 "daily")
-                     #'metoffice-datahub-lib--day-based-weather-to-csv))))
+                     #'metoffice-datahub-lib--day-based-weather-to-csv)))
+        
+        (header (cond ((cl-equalp metoffice-datahub-lib-query-type
+                                  "hourly")
+                       metoffice-datahub-lib-hourly-forecast-header)
+                      ((cl-equalp metoffice-datahub-lib-query-type
+                                  "three-hourly")
+                       metoffice-datahub-lib-hourly-forecast-header)
+                      ((cl-equalp metoffice-datahub-lib-query-type
+                                  "daily")
+                       metoffice-datahub-lib-daily-forecast-header))))
+
     
     (metoffice-datahub-lib-forecast max-events
                                     func
@@ -1067,9 +1102,16 @@ time, temperature, rain-chance, snow, description"
     (let ((buf (get-buffer-create metoffice-datahub-lib-forecast-buffer)))
       (with-current-buffer buf
         (let ((buffer-read-only nil))
+
+          ;; Jump to after the timestamp from the forecasts creation
+          ;; and insert the header for the table.
           (goto-char (point-min))
-          (forward-line) ;; after the heading
-          (insert "\ntime, temp, rain, snow, type\n")
+          (forward-line)
+          (insert (format "\n%s\n" header))
+
+          ;; Then jump back to the start of the header to convert the
+          ;; rest of the buffer to a table and make the header line a
+          ;; header line
           (forward-line -1) ;; before the heading
           (beginning-of-line)
           (org-table-convert-region (point) (point-max) nil)
