@@ -612,20 +612,45 @@ collecting up future output for longer scale forecasts"
           (weather-index nil)
           (vlen (length timeseries)))
 
-      ;; Run through the vector looking for a time thats in the future
+      ;; Run through the vector looking for an event that we are in
+      ;; the window for, this will require checking its time and the
+      ;; next events time.
       (catch 'done
         (dotimes (i vlen)
           (let* ((ts (aref timeseries i))
                  (series-time (gethash "time" ts))
                  (parsed-time (parse-time-string series-time))
-                 (encoded-time (encode-time parsed-time)))
-            
-            ;; (message "considering %s [item: %s vs runtime: %s]"
-            ;;           series-time
-            ;;           (format-time-string "%s" encoded-time)
-            ;;           (format-time-string "%s" runtime))
+                 (encoded-time (encode-time parsed-time))
 
-            (when (not (time-less-p encoded-time runtime))
+                 ;; Get the next time slot if possible
+                 (next-ts (if (< i vlen)
+                              (aref timeseries (+ i 1))
+                            nil))
+                 (next-encoded-time (if next-ts
+                                        (encode-time (parse-time-string
+                                                      (gethash "time" next-ts)))
+                                      nil))
+                 ;; Difference between runtime and current-time
+                 (ec-runtime-diff (time-convert (time-subtract runtime encoded-time)
+                                                'integer)))
+                                                
+            
+            ;; (message "considering %s [item: %s vs runtime: %s vs next-encoded-time: %s vs ec-runtime-diff: %s]"
+            ;;            series-time
+            ;;            (format-time-string "%F %H:%M" encoded-time)
+            ;;            (format-time-string "%F %H:%M" runtime)
+            ;;            (format-time-string "%F %H:%M" next-encoded-time)
+            ;;            ec-runtime-diff)
+
+            (when (or
+                   ;; if we're before the next time slot but above the
+                   ;; "current" time window take that too.
+                   (and (time-less-p runtime next-encoded-time)
+                        (> ec-runtime-diff 0))
+
+                   ;; Otherwise above the encoded-time of the slot we're looking at
+                   (not (time-less-p encoded-time runtime)))
+              
               (metoffice-datahub-lib--debug-message
                (format "setting current-weather to %s" series-time))
               (setq current-weather ts)
